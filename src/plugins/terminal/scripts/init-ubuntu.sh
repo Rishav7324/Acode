@@ -49,7 +49,7 @@ if [ "$INSTALLING" = true ]; then
 APT::Sandbox::User "root";
 APTCONF
 
-    mkdir -p "$PREFIX/.configured"
+    mkdir -p "$PREFIX/.ubuntu_configured"
 
     if [ ! -f "$HOME/.bashrc" ]; then
         touch "$HOME/.bashrc" && chmod 644 "$HOME/.bashrc"

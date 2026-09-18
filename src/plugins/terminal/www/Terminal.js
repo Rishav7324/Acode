@@ -45,13 +45,6 @@ const Terminal = {
         await writeText(`${filesDir}/alpine/bin/rm`, rmWrapper);
         await setExec(`${filesDir}/alpine/bin/rm`, true);
 
-        // Patch ubuntu rm wrapper if ubuntu rootfs exists
-        if (distro === "ubuntu") {
-            await deleteFile(`${filesDir}/ubuntu/bin/rm`).catch(() => {});
-            await writeText(`${filesDir}/ubuntu/bin/rm`, rmWrapper).catch(() => {});
-            await setExec(`${filesDir}/ubuntu/bin/rm`, true).catch(() => {});
-        }
-
         if (installing) {
             return new Promise((resolve, reject) => {
                 let lastError = "";
@@ -474,6 +467,15 @@ const Terminal = {
 
         this.lastInstallError = "";
 
+        // Ensure base terminal environment (PRoot & Alpine) is installed first
+        if (!(await this.isInstalled())) {
+            logger("📦  Setting up base terminal environment first...");
+            const baseOk = await this.install(logger, err_logger);
+            if (!baseOk) {
+                throw new Error(this.lastInstallError || "Base terminal environment installation failed.");
+            }
+        }
+
         const filesDir = await new Promise((resolve, reject) => {
             system.getFilesDir(resolve, reject);
         });
@@ -521,16 +523,12 @@ const Terminal = {
             }
 
             logger("📦  Extracting Ubuntu filesystem...");
-            await Executor.BackgroundExecutor.execute(`tar --no-same-owner -xf ${tarPath} -C ${ubuntuDir}`);
+            // Extract inside base PRoot environment so --link2symlink turns hardlinks into symlinks
+            // without Android kernel "Permission denied" errors.
+            await Executor.BackgroundExecutor.execute(`tar -xf ${tarPath} -C ${ubuntuDir}`, true);
 
             logger("⚙️  Applying basic Ubuntu configuration...");
             await writeText(`${ubuntuDir}/etc/resolv.conf`, `nameserver 8.8.4.4\nnameserver 8.8.8.8`);
-
-            // Write rm wrapper for ubuntu
-            const rmWrapper = await readAsset("rm-wrapper.sh");
-            await deleteFile(`${ubuntuDir}/bin/rm`).catch(() => {});
-            await writeText(`${ubuntuDir}/bin/rm`, rmWrapper);
-            await setExec(`${ubuntuDir}/bin/rm`, true);
 
             // Write apt config to disable sandbox (needed inside proot)
             await ensureDir(`${ubuntuDir}/etc/apt/apt.conf.d`);
