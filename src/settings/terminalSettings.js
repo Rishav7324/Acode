@@ -289,7 +289,7 @@ export default function terminalSettings() {
 			text: strings["terminal:ubuntu-install"] || "Install Ubuntu",
 			info:
 				strings["terminal:ubuntu-install-info"] ||
-				"Download and install an Ubuntu 24.04 LTS environment (~50 MB). Required to use Ubuntu as the terminal distro.",
+				"Download and install an Ubuntu environment (~35 MB). Required to use Ubuntu as the terminal distro.",
 			category: categories.maintenance,
 			chevron: true,
 		},
@@ -529,7 +529,7 @@ export default function terminalSettings() {
 			await new Promise((resolve) => setTimeout(resolve, 100));
 			terminalComponent.mount(container);
 			terminalComponent.write(
-				"🚀 Installing Ubuntu 24.04 LTS...\r\nThis may take a few minutes.\r\n\r\n",
+				"🚀 Installing Ubuntu...\r\nThis may take a few minutes.\r\n\r\n",
 			);
 			terminalFile.setCustomTitle(() => "Installing Ubuntu...");
 

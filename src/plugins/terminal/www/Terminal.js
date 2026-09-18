@@ -506,30 +506,18 @@ const Terminal = {
             const ubuntuDir = `${filesDir}/ubuntu`;
             await ensureDir(ubuntuDir);
 
-            // Ubuntu base releases use point-release names (e.g. 24.04.5), not just 24.04.
-            // Dynamically resolve the latest filename from SHA256SUMS, fallback to 24.04.5.
-            const baseReleaseUrl = `https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release`;
-            let ubuntuFilename = `ubuntu-base-24.04.5-base-${ubuntuArch}.tar.gz`;
-
-            try {
-                logger("🔍  Detecting latest Ubuntu base version...");
-                const sha256data = await fetchText(`${baseReleaseUrl}/SHA256SUMS`);
-                // SHA256SUMS lines: <hash>  *ubuntu-base-24.04.X-base-arm64.tar.gz
-                const regex = new RegExp(`ubuntu-base-[\\d.]+-base-${ubuntuArch}\\.tar\\.gz`, "g");
-                const matches = [...sha256data.matchAll(regex)].map(m => m[0]);
-                if (matches.length > 0) {
-                    ubuntuFilename = matches[matches.length - 1];
-                    logger(`✅  Found latest: ${ubuntuFilename}`);
-                }
-            } catch (e) {
-                logger(`ℹ️  Using default: ${ubuntuFilename}`);
-            }
-
-            const ubuntuBaseUrl = `${baseReleaseUrl}/${ubuntuFilename}`;
+            // Ubuntu base release URL: requested Ubuntu 26.10 snapshot-1 with fallback to 24.04.5 LTS
+            const ubuntu26BaseUrl = `https://cdimage.ubuntu.com/ubuntu-base/releases/26.10/release/snapshot-1/ubuntu-base-26.10-snapshot1-base-${ubuntuArch}.tar.gz`;
+            const ubuntu24BaseUrl = `https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.5-base-${ubuntuArch}.tar.gz`;
             const tarPath = `${filesDir}/ubuntu.tar.gz`;
 
-            logger(`⬇️  Downloading ${ubuntuFilename}...`);
-            await downloadFile(ubuntuBaseUrl, tarPath, "Ubuntu base");
+            logger(`⬇️  Downloading Ubuntu base (26.10 ${ubuntuArch})...`);
+            try {
+                await downloadFile(ubuntu26BaseUrl, tarPath, "Ubuntu base 26.10");
+            } catch (err26) {
+                logger(`⚠️  Ubuntu 26.10 download failed (${formatError(err26)}), trying Ubuntu 24.04 LTS fallback...`);
+                await downloadFile(ubuntu24BaseUrl, tarPath, "Ubuntu base 24.04");
+            }
 
             logger("📦  Extracting Ubuntu filesystem...");
             await Executor.BackgroundExecutor.execute(`tar --no-same-owner -xf ${tarPath} -C ${ubuntuDir}`);
