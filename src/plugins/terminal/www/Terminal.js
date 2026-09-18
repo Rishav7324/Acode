@@ -506,11 +506,29 @@ const Terminal = {
             const ubuntuDir = `${filesDir}/ubuntu`;
             await ensureDir(ubuntuDir);
 
-            // ubuntu-base URL (Ubuntu 24.04 LTS "Noble")
-            const ubuntuBaseUrl = `https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04-base-${ubuntuArch}.tar.gz`;
+            // Ubuntu base releases use point-release names (e.g. 24.04.5), not just 24.04.
+            // Dynamically resolve the latest filename from SHA256SUMS, fallback to 24.04.5.
+            const baseReleaseUrl = `https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release`;
+            let ubuntuFilename = `ubuntu-base-24.04.5-base-${ubuntuArch}.tar.gz`;
+
+            try {
+                logger("🔍  Detecting latest Ubuntu base version...");
+                const sha256data = await fetchText(`${baseReleaseUrl}/SHA256SUMS`);
+                // SHA256SUMS lines: <hash>  *ubuntu-base-24.04.X-base-arm64.tar.gz
+                const regex = new RegExp(`ubuntu-base-[\\d.]+-base-${ubuntuArch}\\.tar\\.gz`, "g");
+                const matches = [...sha256data.matchAll(regex)].map(m => m[0]);
+                if (matches.length > 0) {
+                    ubuntuFilename = matches[matches.length - 1];
+                    logger(`✅  Found latest: ${ubuntuFilename}`);
+                }
+            } catch (e) {
+                logger(`ℹ️  Using default: ${ubuntuFilename}`);
+            }
+
+            const ubuntuBaseUrl = `${baseReleaseUrl}/${ubuntuFilename}`;
             const tarPath = `${filesDir}/ubuntu.tar.gz`;
 
-            logger("⬇️  Downloading Ubuntu base filesystem...");
+            logger(`⬇️  Downloading ${ubuntuFilename}...`);
             await downloadFile(ubuntuBaseUrl, tarPath, "Ubuntu base");
 
             logger("📦  Extracting Ubuntu filesystem...");
@@ -815,6 +833,23 @@ function downloadFile(url, destination, label) {
             destination,
             resolve,
             (error) => reject(new Error(`${label} download failed: ${formatError(error)}`))
+        );
+    });
+}
+
+/**
+ * Fetches a remote URL and returns the response body as a string.
+ * Uses cordova-plugin-advanced-http (same as downloadFile uses).
+ * @param {string} url
+ * @returns {Promise<string>}
+ */
+function fetchText(url) {
+    return new Promise((resolve, reject) => {
+        cordova.plugin.http.sendRequest(
+            url,
+            { method: "GET", responseType: "text" },
+            (response) => resolve(response.data || ""),
+            (error) => reject(new Error(`fetchText failed (${url}): ${formatError(error)}`))
         );
     });
 }
