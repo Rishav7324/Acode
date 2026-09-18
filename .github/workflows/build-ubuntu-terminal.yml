@@ -1,0 +1,93 @@
+name: Build APK - Ubuntu Terminal Feature
+
+on:
+  push:
+    branches:
+      - feat/ubuntu-terminal
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Install Cordova globally
+        run: npm install -g cordova
+
+      - name: Setup Cordova project (plugins + platform)
+        run: npm run setup
+
+      - name: Build APK (debug, paid)
+        run: |
+          node utils/storage_manager.mjs y
+          npm run build paid dev apk
+
+      - name: Rename APK
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          cp platforms/android/app/build/outputs/apk/debug/app-debug.apk \
+             acode-ubuntu-terminal-${SHORT_SHA}.apk
+          echo "APK_NAME=acode-ubuntu-terminal-${SHORT_SHA}.apk" >> $GITHUB_ENV
+
+      - name: Upload APK as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: acode-ubuntu-terminal-apk
+          path: ${{ env.APK_NAME }}
+          retention-days: 30
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ubuntu-terminal-${{ github.sha }}
+          name: "Ubuntu Terminal Build (${{ github.sha }})"
+          body: |
+            ## Ubuntu Terminal Integration Build
+
+            This build adds **optional Ubuntu 24.04 LTS** terminal alongside the default Alpine Linux.
+
+            ### What's new
+            - 🐧 Choose between **Alpine Linux** (default) and **Ubuntu 24.04 LTS** in Terminal Settings → Session
+            - 📦 "Install Ubuntu" button downloads ~50 MB Ubuntu base filesystem
+            - 🔄 Both environments share the same `/public` home directory
+            - ✅ apt package manager available in Ubuntu terminal
+            - 🛠️ Full `acode` CLI tool support in Ubuntu
+
+            ### How to use
+            1. Open **Settings → Terminal → Session**
+            2. Tap **Linux Distribution** → select **Ubuntu**
+            3. Go to **Settings → Terminal → Maintenance → Install Ubuntu**
+            4. Wait for download + setup (~50 MB, few minutes)
+            5. Open a new terminal — Ubuntu is ready!
+
+            **Commit:** `${{ github.sha }}`
+          files: ${{ env.APK_NAME }}
+          draft: false
+          prerelease: true
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
