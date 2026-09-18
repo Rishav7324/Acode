@@ -243,6 +243,27 @@ export default function terminalSettings() {
 			category: categories.maintenance,
 		},
 		{
+			key: "distro",
+			text: strings["terminal:distro"] || "Linux Distribution",
+			value: terminalValues.distro || "alpine",
+			valueText: (value) => {
+				const options = [
+					["alpine", strings["terminal:distro-alpine"] || "Alpine Linux (Default)"],
+					["ubuntu", strings["terminal:distro-ubuntu"] || "Ubuntu (Optional)"],
+				];
+				const option = options.find((item) => item[0] === value);
+				return option ? option[1] : value;
+			},
+			select: [
+				["alpine", strings["terminal:distro-alpine"] || "Alpine Linux (Default)"],
+				["ubuntu", strings["terminal:distro-ubuntu"] || "Ubuntu (Optional)"],
+			],
+			info:
+				strings["terminal:distro-info"] ||
+				"Choose the Linux distribution for new terminal sessions. Ubuntu requires a separate download (~50 MB).",
+			category: categories.session,
+		},
+		{
 			key: "backup",
 			text: strings.backup,
 			info: strings["info-backup"],
@@ -260,6 +281,24 @@ export default function terminalSettings() {
 			key: "uninstall",
 			text: strings.uninstall,
 			info: strings["info-uninstall"],
+			category: categories.maintenance,
+			chevron: true,
+		},
+		{
+			key: "ubuntu-install",
+			text: strings["terminal:ubuntu-install"] || "Install Ubuntu",
+			info:
+				strings["terminal:ubuntu-install-info"] ||
+				"Download and install an Ubuntu 24.04 LTS environment (~50 MB). Required to use Ubuntu as the terminal distro.",
+			category: categories.maintenance,
+			chevron: true,
+		},
+		{
+			key: "ubuntu-uninstall",
+			text: strings["terminal:ubuntu-uninstall"] || "Uninstall Ubuntu",
+			info:
+				strings["terminal:ubuntu-uninstall-info"] ||
+				"Remove the Ubuntu Linux environment from this device.",
 			category: categories.maintenance,
 			chevron: true,
 		},
@@ -335,6 +374,32 @@ export default function terminalSettings() {
 				Executor.setProotDebug(value);
 				Executor.BackgroundExecutor.setProotDebug(value);
 				break;
+
+			case "distro":
+				appSettings.update({
+					terminalSettings: {
+						...values.terminalSettings,
+						distro: value,
+					},
+				});
+				if (value === "ubuntu") {
+					const isInstalled = await Terminal.isUbuntuInstalled();
+					if (!isInstalled) {
+						toast(
+							strings["terminal:ubuntu-not-installed"] ||
+								"Ubuntu is not installed. Use 'Install Ubuntu' below to set it up.",
+						);
+					}
+				}
+				return;
+
+			case "ubuntu-install":
+				ubuntuInstall();
+				return;
+
+			case "ubuntu-uninstall":
+				ubuntuUninstall();
+				return;
 
 			default:
 				appSettings.update({
@@ -416,6 +481,126 @@ export default function terminalSettings() {
 			loader.removeTitleLoader();
 			console.error("Terminal restore failed:", error);
 			toast(error.toString());
+		}
+	}
+
+	/**
+	 * Installs Ubuntu Linux environment with a progress terminal
+	 */
+	async function ubuntuInstall() {
+		try {
+			const { TerminalManager } = await import(
+				/* webpackChunkName: "terminal" */ "components/terminal"
+			);
+
+			// Check if already installed
+			const alreadyInstalled = await Terminal.isUbuntuInstalled();
+			if (alreadyInstalled) {
+				const proceed = await confirm(
+					strings.confirm,
+					strings["terminal:ubuntu-already-installed"] ||
+						"Ubuntu is already installed. Reinstall?",
+				);
+				if (!proceed) return;
+			}
+
+			// Create a progress terminal to show install output
+			const terminalId = `ubuntu_install_${Date.now()}`;
+			const terminalName = strings["terminal:ubuntu-install"] || "Install Ubuntu";
+
+			const { TerminalComponent } = await import(
+				/* webpackChunkName: "terminal" */ "components/terminal"
+			);
+			const terminalComponent = new TerminalComponent({ serverMode: false });
+
+			const EditorFile = (await import("lib/editorFile")).default;
+			const container = tag("div", {
+				className: "terminal-content",
+				id: `terminal-ubuntu-install`,
+			});
+
+			const terminalFile = new EditorFile(terminalName, {
+				type: "terminal",
+				content: container,
+				tabIcon: "icon save_alt",
+				render: true,
+			});
+
+			await new Promise((resolve) => setTimeout(resolve, 100));
+			terminalComponent.mount(container);
+			terminalComponent.write(
+				"🚀 Installing Ubuntu 24.04 LTS...\r\nThis may take a few minutes.\r\n\r\n",
+			);
+			terminalFile.setCustomTitle(() => "Installing Ubuntu...");
+
+			const installResult = await Terminal.installUbuntu(
+				(message) => {
+					const clean = message.replace(/^(stdout|stderr)\s+/, "") || "";
+					terminalComponent.write(`${clean}\r\n`);
+				},
+				(...errorParts) => {
+					const clean = errorParts
+						.filter(Boolean)
+						.join(" ")
+						.replace(/^(stdout|stderr)\s+/, "");
+					terminalComponent.write(`\x1b[31mError: ${clean}\x1b[0m\r\n`);
+				},
+			);
+
+			if (installResult) {
+				terminalComponent.write(
+					"\r\n\x1b[32m✅ Ubuntu installed successfully!\x1b[0m\r\n",
+				);
+				terminalFile.setCustomTitle(() => "Ubuntu Installed");
+				alert(strings.success.toUpperCase(), "Ubuntu installed successfully.");
+			} else {
+				const errorMsg = Terminal.lastInstallError || "Ubuntu installation failed.";
+				terminalComponent.write(`\r\n\x1b[31m❌ ${errorMsg}\x1b[0m\r\n`);
+				terminalFile.setCustomTitle(() => "Ubuntu Install Failed");
+				alert(strings["error"], errorMsg);
+			}
+		} catch (error) {
+			console.error("Ubuntu install failed:", error);
+			helpers.error(error);
+		}
+	}
+
+	/**
+	 * Uninstalls Ubuntu Linux environment
+	 */
+	async function ubuntuUninstall() {
+		const confirmation = await confirm(
+			strings.confirm,
+			strings["terminal:ubuntu-uninstall-confirm"] ||
+				"Remove Ubuntu? All data inside the Ubuntu environment will be deleted.",
+		);
+		if (!confirmation) return;
+
+		loader.showTitleLoader();
+		try {
+			await Executor.BackgroundExecutor.execute(
+				"rm -rf $PREFIX/ubuntu $PREFIX/.ubuntu_configured $PREFIX/ubuntu.tar.gz",
+			);
+			loader.removeTitleLoader();
+			alert(
+				strings.success.toUpperCase(),
+				strings["terminal:ubuntu-uninstalled"] || "Ubuntu has been removed.",
+			);
+
+			// If distro was set to ubuntu, switch back to alpine
+			if (values.terminalSettings?.distro === "ubuntu") {
+				appSettings.update({
+					terminalSettings: {
+						...values.terminalSettings,
+						distro: "alpine",
+					},
+				});
+				toast("Switched back to Alpine Linux.");
+			}
+		} catch (error) {
+			loader.removeTitleLoader();
+			console.error("Ubuntu uninstall failed:", error);
+			helpers.error(error);
 		}
 	}
 }

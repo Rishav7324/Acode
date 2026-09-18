@@ -1228,7 +1228,11 @@ class TerminalManager {
 
 		const packageName = window.BuildInfo?.packageName || "com.foxdebug.acode";
 		const dataDir = `/data/user/0/${packageName}`;
-		const alpineRoot = `${dataDir}/files/alpine`;
+		const distro = appSettings?.value?.terminalSettings?.distro || "alpine";
+		const distroRoot =
+			distro === "ubuntu"
+				? `${dataDir}/files/ubuntu`
+				: `${dataDir}/files/alpine`;
 
 		let convertedPath;
 
@@ -1242,13 +1246,12 @@ class TerminalManager {
 		) {
 			convertedPath = `file://${prootPath}`;
 		} else if (prootPath.startsWith("/")) {
-			// Everything else is relative to alpine root
-			convertedPath = `file://${alpineRoot}${prootPath}`;
+			// Everything else is relative to the active distro root
+			convertedPath = `file://${distroRoot}${prootPath}`;
 		} else {
 			convertedPath = prootPath;
 		}
 
-		//console.log(`Path conversion: ${prootPath} -> ${convertedPath}`);
 		return convertedPath;
 	}
 

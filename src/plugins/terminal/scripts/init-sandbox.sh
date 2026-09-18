@@ -66,7 +66,6 @@ ARGS="$ARGS -b $NATIVE_DIR"
 ARGS="$ARGS -b $PREFIX/public:/public"
 ARGS="$ARGS -b $PREFIX/public:/home"
 ARGS="$ARGS -b $PREFIX/public:/root"
-ARGS="$ARGS -b $PREFIX/alpine/tmp:/dev/shm"
 
 
 # PRoot canonicalizes every -b host path with realpath(3).  The magic links
@@ -118,15 +117,9 @@ if can_bind "/proc/$SELF_PID/fd/2"; then
 fi
 
 
-ARGS="$ARGS -r $PREFIX/alpine"
-ARGS="$ARGS -0"
-ARGS="$ARGS --link2symlink"
-ARGS="$ARGS --sysvipc"
-ARGS="$ARGS -L"
-
-
 FAILSAFE=false
 INSTALLING=false
+DISTRO="alpine"
 
 for arg in "$@"; do
     case "$arg" in
@@ -136,8 +129,30 @@ for arg in "$@"; do
         --installing)
             INSTALLING=true
             ;;
+        --distro=*)
+            DISTRO="${arg#--distro=}"
+            ;;
     esac
 done
+
+# Select rootfs and init script based on chosen distro
+if [ "$DISTRO" = "ubuntu" ] && [ -d "$PREFIX/ubuntu" ]; then
+    ROOTFS="$PREFIX/ubuntu"
+    INIT_SCRIPT="$PREFIX/init-ubuntu.sh"
+    mkdir -p "$PREFIX/ubuntu/tmp"
+    ARGS="$ARGS -b $PREFIX/ubuntu/tmp:/dev/shm"
+else
+    ROOTFS="$PREFIX/alpine"
+    INIT_SCRIPT="$PREFIX/init-alpine.sh"
+    ARGS="$ARGS -b $PREFIX/alpine/tmp:/dev/shm"
+fi
+
+ARGS="$ARGS -r $ROOTFS"
+ARGS="$ARGS -0"
+ARGS="$ARGS --link2symlink"
+ARGS="$ARGS --sysvipc"
+ARGS="$ARGS -L"
+
 
 if [ "$FAILSAFE" = true ] && [ "$INSTALLING" != true ]; then
     echo "$$" > "$PREFIX/pid"
@@ -150,5 +165,5 @@ if [ "$FAILSAFE" = true ] && [ "$INSTALLING" != true ]; then
 
     exec "$LINKER" "$PREFIX/axs" -c "sh"
 else
-    exec "$PROOT" $ARGS /bin/sh "$PREFIX/init-alpine.sh" "$@"
+    exec "$PROOT" $ARGS /bin/sh "$INIT_SCRIPT" "$@"
 fi

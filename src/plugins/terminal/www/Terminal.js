@@ -6,19 +6,23 @@ const Terminal = {
      * @param {boolean} [installing=false] - Whether AXS is being started during installation.
      * @param {Function} [logger=console.log] - Function to log standard output.
      * @param {Function} [err_logger=console.error] - Function to log errors.
+     * @param {boolean} [failsafe=false] - Whether to start in failsafe mode.
+     * @param {string} [distro="alpine"] - Which Linux distro rootfs to use: "alpine" or "ubuntu".
      * @returns {Promise<boolean>} - Returns true if installation completes with exit code 0, void if not installing
      */
-    async startAxs(installing = false, logger = console.log, err_logger = console.error,failsafe = false) {
+    async startAxs(installing = false, logger = console.log, err_logger = console.error, failsafe = false, distro = "alpine") {
         const filesDir = await new Promise((resolve, reject) => {
             system.getFilesDir(resolve, reject);
         });
 
         const failsafeArg = failsafe ? "--failsafe" : "";
+        const distroArg = distro === "ubuntu" ? "--distro=ubuntu" : "";
 
-        const [initAlpine, rmWrapper, initSandbox] = await Promise.all([
+        const [initAlpine, rmWrapper, initSandbox, initUbuntu] = await Promise.all([
             readAsset("init-alpine.sh"),
             readAsset("rm-wrapper.sh"),
             readAsset("init-sandbox.sh"),
+            readAsset("init-ubuntu.sh").catch(() => null),
         ]);
 
         await this.migrateLegacyHome();
@@ -29,14 +33,24 @@ const Terminal = {
 //the symlink must be updated everytime because the symlinks to native libs can break after app updates
         await Executor.execute("rm -f $PREFIX/axs && ln -s $NATIVE_DIR/libaxs.so $PREFIX/axs")
 }
-        
+
 
         await writeText(`${filesDir}/init-alpine.sh`, initAlpine);
         await writeText(`${filesDir}/init-sandbox.sh`, initSandbox);
+        if (initUbuntu) {
+            await writeText(`${filesDir}/init-ubuntu.sh`, initUbuntu);
+        }
 
         await deleteFile(`${filesDir}/alpine/bin/rm`).catch(() => {});
         await writeText(`${filesDir}/alpine/bin/rm`, rmWrapper);
         await setExec(`${filesDir}/alpine/bin/rm`, true);
+
+        // Patch ubuntu rm wrapper if ubuntu rootfs exists
+        if (distro === "ubuntu") {
+            await deleteFile(`${filesDir}/ubuntu/bin/rm`).catch(() => {});
+            await writeText(`${filesDir}/ubuntu/bin/rm`, rmWrapper).catch(() => {});
+            await setExec(`${filesDir}/ubuntu/bin/rm`, true).catch(() => {});
+        }
 
         if (installing) {
             return new Promise((resolve, reject) => {
@@ -61,7 +75,7 @@ const Terminal = {
                         resolve(success);
                     }
                 }).then(async (uuid) => {
-                    await Executor.write(uuid, `source ${filesDir}/init-sandbox.sh ${installing ? "--installing" : ""} ${failsafeArg}; exit`);
+                    await Executor.write(uuid, `source ${filesDir}/init-sandbox.sh ${installing ? "--installing" : ""} ${failsafeArg} ${distroArg}; exit`);
                 }).catch((error) => {
                     const message = `Failed to start AXS: ${formatError(error)}`;
                     this.lastInstallError = message;
@@ -75,7 +89,7 @@ const Terminal = {
                     //console[type === "stderr" ? "error" : "log"](`[AXS] ${data}`);
                     logger(`${type} ${data}`);
                 });
-                await Executor.write(uuid, `source ${filesDir}/init-sandbox.sh ${installing ? "--installing" : ""} ${failsafeArg}; exit`);
+                await Executor.write(uuid, `source ${filesDir}/init-sandbox.sh ${installing ? "--installing" : ""} ${failsafeArg} ${distroArg}; exit`);
             } catch (error) {
                 const message = `Failed to start AXS: ${formatError(error)}`;
                 err_logger(message);
@@ -420,6 +434,122 @@ const Terminal = {
 
             resolve(alpineExists && downloaded && extracted && configured);
         });
+    },
+
+    /**
+     * Checks if Ubuntu is already installed.
+     * @returns {Promise<boolean>}
+     */
+    isUbuntuInstalled() {
+        return new Promise(async (resolve, reject) => {
+            const filesDir = await new Promise((resolve, reject) => {
+                system.getFilesDir(resolve, reject);
+            });
+
+            const ubuntuExists = await new Promise((resolve, reject) => {
+                system.fileExists(`${filesDir}/ubuntu`, false, (result) => {
+                    resolve(result == 1);
+                }, reject);
+            });
+
+            const configured = ubuntuExists && await new Promise((resolve, reject) => {
+                system.fileExists(`${filesDir}/.ubuntu_configured`, false, (result) => {
+                    resolve(result == 1);
+                }, reject);
+            });
+
+            resolve(ubuntuExists && configured);
+        });
+    },
+
+    /**
+     * Installs a minimal Ubuntu LTS rootfs into $filesDir/ubuntu.
+     * Downloads ubuntu-base (a minimal debootstrap tarball) and runs apt to configure it.
+     * @param {Function} [logger=console.log] - Function to log standard output.
+     * @param {Function} [err_logger=console.error] - Function to log errors.
+     * @returns {Promise<boolean>} - Returns true on success
+     */
+    async installUbuntu(logger = console.log, err_logger = console.error) {
+        if (!(await this.isSupported())) return false;
+
+        this.lastInstallError = "";
+
+        const filesDir = await new Promise((resolve, reject) => {
+            system.getFilesDir(resolve, reject);
+        });
+
+        const arch = await new Promise((resolve, reject) => {
+            system.getArch(resolve, reject);
+        });
+
+        const isFdroid = await Executor.execute("echo $FDROID");
+
+        // Ubuntu base architecture names
+        const ubuntuArchMap = {
+            "arm64-v8a": "arm64",
+            "armeabi-v7a": "armhf",
+            "x86_64":  "amd64",
+        };
+
+        const ubuntuArch = ubuntuArchMap[arch];
+        if (!ubuntuArch) {
+            this.lastInstallError = `Unsupported architecture for Ubuntu: ${arch}`;
+            return false;
+        }
+
+        try {
+            // Clean up previous incomplete install
+            try {
+                await Executor.BackgroundExecutor.execute(`rm -rf ${filesDir}/ubuntu ${filesDir}/.ubuntu_configured`);
+            } catch (e) { /* suppress */ }
+
+            const ubuntuDir = `${filesDir}/ubuntu`;
+            await ensureDir(ubuntuDir);
+
+            // ubuntu-base URL (Ubuntu 24.04 LTS "Noble")
+            const ubuntuBaseUrl = `https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04-base-${ubuntuArch}.tar.gz`;
+            const tarPath = `${filesDir}/ubuntu.tar.gz`;
+
+            logger("⬇️  Downloading Ubuntu base filesystem...");
+            await downloadFile(ubuntuBaseUrl, tarPath, "Ubuntu base");
+
+            logger("📦  Extracting Ubuntu filesystem...");
+            await Executor.BackgroundExecutor.execute(`tar --no-same-owner -xf ${tarPath} -C ${ubuntuDir}`);
+
+            logger("⚙️  Applying basic Ubuntu configuration...");
+            await writeText(`${ubuntuDir}/etc/resolv.conf`, `nameserver 8.8.4.4\nnameserver 8.8.8.8`);
+
+            // Write rm wrapper for ubuntu
+            const rmWrapper = await readAsset("rm-wrapper.sh");
+            await deleteFile(`${ubuntuDir}/bin/rm`).catch(() => {});
+            await writeText(`${ubuntuDir}/bin/rm`, rmWrapper);
+            await setExec(`${ubuntuDir}/bin/rm`, true);
+
+            // Write apt config to disable sandbox (needed inside proot)
+            await ensureDir(`${ubuntuDir}/etc/apt/apt.conf.d`);
+            await writeText(`${ubuntuDir}/etc/apt/apt.conf.d/99-proot`, 'APT::Sandbox::User "root";\n');
+
+            logger("✅  Ubuntu extraction complete");
+            await ensureDir(`${filesDir}/.ubuntu_configured`);
+
+            logger("⚙️  Configuring Ubuntu environment...");
+            // Run init-ubuntu.sh --installing inside the ubuntu rootfs to finalize configuration
+            const installResult = await this.startAxs(true, logger, err_logger, false, "ubuntu");
+            if (!installResult) {
+                throw new Error(this.lastInstallError || "Ubuntu configuration failed.");
+            }
+
+            // Cleanup tar
+            await Executor.BackgroundExecutor.execute(`rm -f ${tarPath}`).catch(() => {});
+
+            return true;
+        } catch (e) {
+            const message = formatError(e);
+            this.lastInstallError = message;
+            err_logger(`Ubuntu installation failed: ${message}`);
+            console.error("Ubuntu installation failed:", e);
+            return false;
+        }
     },
 
     /**
