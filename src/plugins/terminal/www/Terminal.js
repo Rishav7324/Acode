@@ -509,14 +509,15 @@ const Terminal = {
             // Ubuntu base release URL: requested Ubuntu 26.10 snapshot-1 with fallback to 24.04.5 LTS
             const ubuntu26BaseUrl = `https://cdimage.ubuntu.com/ubuntu-base/releases/26.10/release/snapshot-1/ubuntu-base-26.10-snapshot1-base-${ubuntuArch}.tar.gz`;
             const ubuntu24BaseUrl = `https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.5-base-${ubuntuArch}.tar.gz`;
+            const downloadDest = cordova.file.dataDirectory + "ubuntu.tar.gz";
             const tarPath = `${filesDir}/ubuntu.tar.gz`;
 
             logger(`⬇️  Downloading Ubuntu base (26.10 ${ubuntuArch})...`);
             try {
-                await downloadFile(ubuntu26BaseUrl, tarPath, "Ubuntu base 26.10");
+                await downloadFile(ubuntu26BaseUrl, downloadDest, "Ubuntu base 26.10");
             } catch (err26) {
                 logger(`⚠️  Ubuntu 26.10 download failed (${formatError(err26)}), trying Ubuntu 24.04 LTS fallback...`);
-                await downloadFile(ubuntu24BaseUrl, tarPath, "Ubuntu base 24.04");
+                await downloadFile(ubuntu24BaseUrl, downloadDest, "Ubuntu base 24.04");
             }
 
             logger("📦  Extracting Ubuntu filesystem...");
@@ -815,10 +816,14 @@ function setExec(path, executable) {
 }
 
 function downloadFile(url, destination, label) {
+    let destUri = destination;
+    if (typeof destUri === "string" && !destUri.startsWith("file://") && !destUri.startsWith("content://")) {
+        destUri = `file://${destUri.startsWith("/") ? "" : "/"}${destUri}`;
+    }
     return new Promise((resolve, reject) => {
         cordova.plugin.http.downloadFile(
             url, {}, {},
-            destination,
+            destUri,
             resolve,
             (error) => reject(new Error(`${label} download failed: ${formatError(error)}`))
         );
