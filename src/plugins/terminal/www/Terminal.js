@@ -523,9 +523,16 @@ const Terminal = {
             }
 
             logger("📦  Extracting Ubuntu filesystem...");
-            // Extract inside base PRoot environment so --link2symlink turns hardlinks into symlinks
-            // without Android kernel "Permission denied" errors.
-            await Executor.BackgroundExecutor.execute(`tar -xf ${tarPath} -C ${ubuntuDir}`, true);
+            const extractCmd = [
+                `{ tar --no-same-owner -xf "${tarPath}" -C "${ubuntuDir}" 2>/dev/null || [ -f "${ubuntuDir}/bin/sh" ] || [ -f "${ubuntuDir}/usr/bin/sh" ]; }`,
+                `mkdir -p "${ubuntuDir}/usr/lib/cargo/bin/coreutils" 2>/dev/null || true`,
+                `for f in "${ubuntuDir}/usr/bin"/*; do dest=$(readlink "$f" 2>/dev/null || true); case "$dest" in *cargo/bin/coreutils/*) applet="\${dest##*/}"; ln -sf /usr/bin/coreutils "${ubuntuDir}/usr/lib/cargo/bin/coreutils/$applet" 2>/dev/null || true;; esac; done`,
+                `[ -f "${ubuntuDir}/usr/bin/perl" ] && ln -sf /usr/bin/perl "${ubuntuDir}/usr/bin/perl5.40.1" 2>/dev/null || true`,
+                `[ -f "${ubuntuDir}/usr/bin/perl" ] && ln -sf /usr/bin/perl "${ubuntuDir}/usr/bin/perl5.38.2" 2>/dev/null || true`,
+                `[ -f "${ubuntuDir}/usr/bin/gunzip" ] && ln -sf /usr/bin/gunzip "${ubuntuDir}/usr/bin/uncompress" 2>/dev/null || true`,
+                `{ [ -f "${ubuntuDir}/bin/sh" ] || [ -f "${ubuntuDir}/usr/bin/sh" ]; }`,
+            ].join(" && ");
+            await Executor.BackgroundExecutor.execute(extractCmd);
 
             logger("⚙️  Applying basic Ubuntu configuration...");
             await writeText(`${ubuntuDir}/etc/resolv.conf`, `nameserver 8.8.4.4\nnameserver 8.8.8.8`);
